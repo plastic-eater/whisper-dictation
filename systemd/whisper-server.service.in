@@ -1,0 +1,10 @@
+[Unit]
+Description=whisper.cpp inference server (base.en, kept warm for dictation)
+
+[Service]
+ExecStart=@ENGINE_DIR@/whisper.cpp/build/bin/whisper-server -m @ENGINE_DIR@/whisper.cpp/models/ggml-base.en.bin --host 127.0.0.1 --port 8910 -t 8 -nt
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

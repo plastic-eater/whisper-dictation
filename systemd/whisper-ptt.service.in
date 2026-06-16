@@ -1,0 +1,11 @@
+[Unit]
+Description=Whisper push-to-talk dictation listener (hold Print Screen to dictate)
+
+[Service]
+Environment=WHISPER_DICT_HOME=@ENGINE_DIR@
+ExecStart=/usr/bin/python3 @REPO_DIR@/ptt-listener.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

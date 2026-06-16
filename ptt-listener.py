@@ -131,6 +131,7 @@ LOWERCASE_ACRONYMS = {
     "lol", "lmao", "lmfao", "rofl", "ttyl", "brb", "idk", "imo", "imho", "iirc",
     "tbh", "btw", "fyi", "omg", "wtf", "smh", "nvm", "irl", "afaik", "idc", "ikr",
     "jk", "tldr", "fwiw", "ngl", "iykyk", "wyd", "hmu", "istg", "tmi", "afk",
+    "rn", "ty", "np",   # "ty" also lowercases the name "Ty" — remove if that bites
 }
 _ACRONYM_RE = re.compile(
     r"\b(?:" + "|".join(map(re.escape, LOWERCASE_ACRONYMS)) + r")\b", re.IGNORECASE

@@ -124,6 +124,23 @@ def collapse_repeats(text, max_phrase=6):
     return " ".join(words)
 
 
+# Texting acronyms whisper tends to capitalize; force them lowercase. Matching is
+# whole-word and case-insensitive. Add/remove freely. Ambiguous ones (e.g. "rn"/"RN",
+# "ty", "np") are intentionally left out so legitimate capitalized words aren't clobbered.
+LOWERCASE_ACRONYMS = {
+    "lol", "lmao", "lmfao", "rofl", "ttyl", "brb", "idk", "imo", "imho", "iirc",
+    "tbh", "btw", "fyi", "omg", "wtf", "smh", "nvm", "irl", "afaik", "idc", "ikr",
+    "jk", "tldr", "fwiw", "ngl", "iykyk", "wyd", "hmu", "istg", "tmi", "afk",
+}
+_ACRONYM_RE = re.compile(
+    r"\b(?:" + "|".join(map(re.escape, LOWERCASE_ACRONYMS)) + r")\b", re.IGNORECASE
+)
+
+
+def lower_acronyms(text):
+    return _ACRONYM_RE.sub(lambda m: m.group(0).lower(), text)
+
+
 def http_transcribe(path, url, timeout=30):
     """POST the audio to a warm whisper-server. Returns text, or None if the
     server can't be reached (so the caller can fall back to whisper-cli)."""
@@ -196,7 +213,7 @@ def snapshot_transcribe():
 def preview_loop():
     while not _preview_stop.is_set():
         try:
-            text = collapse_repeats(snapshot_transcribe())
+            text = lower_acronyms(collapse_repeats(snapshot_transcribe()))
             if not _preview_stop.is_set() and text:
                 overlay_write(text)
         except Exception:
@@ -239,7 +256,7 @@ def stop_and_type():
         _preview_thread = None
 
     overlay_write("⏳ transcribing…")
-    text = transcribe(WAV, SERVER_URL, timeout=60)
+    text = lower_acronyms(transcribe(WAV, SERVER_URL, timeout=60))
     overlay_stop()
     if not text:
         return

@@ -142,6 +142,31 @@ def lower_acronyms(text):
     return _ACRONYM_RE.sub(lambda m: m.group(0).lower(), text)
 
 
+_ACRONYMS_BY_LEN = sorted(LOWERCASE_ACRONYMS, key=len, reverse=True)
+
+
+def _decompose(tok):
+    """Return a list of acronyms that exactly tile `tok`, or None."""
+    if not tok:
+        return []
+    for a in _ACRONYMS_BY_LEN:
+        if tok.startswith(a):
+            rest = _decompose(tok[len(a):])
+            if rest is not None:
+                return [a] + rest
+    return None
+
+
+def split_merged_acronyms(text):
+    """Split a token whisper fused from back-to-back acronyms ('lolty' -> 'lol ty').
+    Only fires when the whole token is >= 2 acronyms, so real words (which contain
+    non-acronym letters) are never touched."""
+    def repl(m):
+        pieces = _decompose(m.group(0).lower())
+        return " ".join(pieces) if pieces and len(pieces) >= 2 else m.group(0)
+    return re.sub(r"[A-Za-z]+", repl, text)
+
+
 # whisper mishears "sudo" as the homophone "pseudo". Convert it back ONLY when the
 # next word is a shell command, so real uses ("pseudocode", "pseudo-random") survive.
 SHELL_COMMANDS = {
@@ -163,7 +188,7 @@ def fix_sudo(text):
 
 
 def postprocess(text):
-    return lower_acronyms(fix_sudo(text))
+    return lower_acronyms(fix_sudo(split_merged_acronyms(text)))
 
 
 def http_transcribe(path, url, timeout=30):

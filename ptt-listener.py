@@ -142,6 +142,30 @@ def lower_acronyms(text):
     return _ACRONYM_RE.sub(lambda m: m.group(0).lower(), text)
 
 
+# whisper mishears "sudo" as the homophone "pseudo". Convert it back ONLY when the
+# next word is a shell command, so real uses ("pseudocode", "pseudo-random") survive.
+SHELL_COMMANDS = {
+    "apt", "apt-get", "dnf", "pacman", "snap", "systemctl", "service", "journalctl",
+    "rm", "cp", "mv", "mkdir", "rmdir", "ln", "chmod", "chown", "chgrp", "tee",
+    "dd", "mount", "umount", "reboot", "shutdown", "kill", "killall", "ufw",
+    "nano", "vim", "vi", "docker", "git", "make", "pip", "pip3", "npm", "modprobe",
+    "usermod", "useradd", "groupadd", "passwd", "visudo", "iptables", "fdisk", "su",
+}
+_PSEUDO_RE = re.compile(r"\bpseudo\b(\s+)(\w[\w-]*)", re.IGNORECASE)
+
+
+def fix_sudo(text):
+    return _PSEUDO_RE.sub(
+        lambda m: ("sudo" + m.group(1) + m.group(2))
+        if m.group(2).lower() in SHELL_COMMANDS else m.group(0),
+        text,
+    )
+
+
+def postprocess(text):
+    return lower_acronyms(fix_sudo(text))
+
+
 def http_transcribe(path, url, timeout=30):
     """POST the audio to a warm whisper-server. Returns text, or None if the
     server can't be reached (so the caller can fall back to whisper-cli)."""
@@ -214,7 +238,7 @@ def snapshot_transcribe():
 def preview_loop():
     while not _preview_stop.is_set():
         try:
-            text = lower_acronyms(collapse_repeats(snapshot_transcribe()))
+            text = postprocess(collapse_repeats(snapshot_transcribe()))
             if not _preview_stop.is_set() and text:
                 overlay_write(text)
         except Exception:
@@ -257,7 +281,7 @@ def stop_and_type():
         _preview_thread = None
 
     overlay_write("⏳ transcribing…")
-    text = lower_acronyms(transcribe(WAV, SERVER_URL, timeout=60))
+    text = postprocess(transcribe(WAV, SERVER_URL, timeout=60))
     overlay_stop()
     if not text:
         return

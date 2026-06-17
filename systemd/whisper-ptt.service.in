@@ -1,5 +1,11 @@
+# Bound to graphical-session.target (not default.target) so it starts AFTER GNOME
+# imports DISPLAY/WAYLAND_DISPLAY/XAUTHORITY into the user manager. At default.target
+# (boot) those aren't set yet, so the spawned GTK preview overlay has no display to
+# connect to and silently fails to appear.
 [Unit]
 Description=Whisper push-to-talk dictation listener (hold Print Screen to dictate)
+After=graphical-session.target
+PartOf=graphical-session.target
 
 [Service]
 Environment=WHISPER_DICT_HOME=@ENGINE_DIR@
@@ -8,4 +14,4 @@ Restart=on-failure
 RestartSec=2
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target

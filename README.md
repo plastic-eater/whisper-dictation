@@ -17,8 +17,7 @@ cd whisper-dictation
 
 `install.sh` installs deps, builds whisper.cpp + ydotool from source (the repo
 stays tiny — engines and models are fetched/built, not committed), downloads the
-`base.en` + `tiny.en` models, sets up the typing daemon, and enables the user
-services. **Log out and back in once** afterward (so the new `input` group takes
+`base.en` model, sets up the typing daemon, and enables the user services. **Log out and back in once** afterward (so the new `input` group takes
 effect), then hold Print Screen to dictate.
 
 Tested on Ubuntu 24.04 / GNOME Wayland, CPU-only.
@@ -32,9 +31,10 @@ overlay; only the final transcription on release is actually typed.
 - A listener (`ptt-listener.py`) reads the keyboard directly via evdev — Wayland
   hotkeys only fire on key *press*, never release, so this is the only way to get
   hold-to-talk. Needs the `input` group.
-- Transcription hits warm **whisper-server** instances (models resident in RAM,
-  no per-call load): **base.en on :8910** for the typed text, **tiny.en on :8911**
-  for the fast preview. Falls back to `whisper-cli` if a server is down.
+- Transcription hits a warm **whisper-server** (base.en, model resident in RAM,
+  no per-call load) on :8910 — used for both the typed text and the live preview,
+  so the preview shows exactly what will be typed. Falls back to `whisper-cli` if
+  the server is down.
 - `preview-overlay.py` is a GTK override-redirect window with an RGBA visual —
   translucent background, opaque text, and it never steals keyboard focus.
 - **ydotool** types via a kernel-level uinput virtual keyboard (the one way to
@@ -46,8 +46,7 @@ overlay; only the final transcription on release is actually typed.
 | Service | Role |
 |---|---|
 | `whisper-ptt` (user) | the keyboard listener |
-| `whisper-server` (user) | base.en :8910 — final typed text |
-| `whisper-preview` (user) | tiny.en :8911 — live preview |
+| `whisper-server` (user) | base.en :8910 — typed text + live preview |
 | `ydotoold` (system) | virtual keyboard for typing |
 
 ```bash

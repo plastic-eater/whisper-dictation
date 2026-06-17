@@ -24,8 +24,8 @@ import urllib.request
 import evdev
 from evdev import ecodes
 
-SERVER_URL         = "http://127.0.0.1:8910/inference"   # base.en, final typed text
-PREVIEW_SERVER_URL = "http://127.0.0.1:8911/inference"   # tiny.en, fast throwaway preview
+SERVER_URL         = "http://127.0.0.1:8910/inference"   # base.en — used for both the final
+PREVIEW_SERVER_URL = SERVER_URL                          # typed text and the live preview
 
 
 def _engine_dir():

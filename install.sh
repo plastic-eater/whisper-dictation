@@ -31,11 +31,9 @@ mkdir -p "$ENGINE_DIR"
 cmake -S "$ENGINE_DIR/whisper.cpp" -B "$ENGINE_DIR/whisper.cpp/build" -DCMAKE_BUILD_TYPE=Release
 cmake --build "$ENGINE_DIR/whisper.cpp/build" -j
 
-echo "==> Downloading models (base.en + tiny.en)…"
-for m in base.en tiny.en; do
-    [ -f "$ENGINE_DIR/whisper.cpp/models/ggml-$m.bin" ] || \
-        bash "$ENGINE_DIR/whisper.cpp/models/download-ggml-model.sh" "$m"
-done
+echo "==> Downloading model (base.en)…"
+[ -f "$ENGINE_DIR/whisper.cpp/models/ggml-base.en.bin" ] || \
+    bash "$ENGINE_DIR/whisper.cpp/models/download-ggml-model.sh" base.en
 
 # --- 3. ydotool (client + daemon; Ubuntu's package omits the daemon) --------
 echo "==> Building ydotool…"
@@ -60,12 +58,12 @@ sudo usermod -aG input "$USER"
 # --- 6. user services -------------------------------------------------------
 echo "==> Installing user services…"
 mkdir -p "$HOME/.config/systemd/user"
-for svc in whisper-server whisper-preview whisper-ptt; do
+for svc in whisper-server whisper-ptt; do
     sed -e "s#@ENGINE_DIR@#$ENGINE_DIR#g" -e "s#@REPO_DIR@#$REPO_DIR#g" \
         "$REPO_DIR/systemd/$svc.service.in" > "$HOME/.config/systemd/user/$svc.service"
 done
 systemctl --user daemon-reload
-systemctl --user enable --now whisper-server whisper-preview whisper-ptt
+systemctl --user enable --now whisper-server whisper-ptt
 
 echo
 echo "==> Done."

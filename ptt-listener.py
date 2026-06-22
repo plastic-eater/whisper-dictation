@@ -187,8 +187,34 @@ def fix_sudo(text):
     )
 
 
+# Literal phrase fixes: case-insensitive whole-phrase match -> fixed spelling.
+# Keys are lowercase; words may be separated by spaces or hyphens (whisper spells
+# the "okie doke" interjection several ways), and the separator matches either.
+PHRASE_FIXES = {
+    "okie doke": "okiedok",
+    "okey doke": "okiedok",
+    "okie dokie": "okiedok",
+    "okey dokie": "okiedok",
+    "christ": "christ",       # keep the exclamation lowercase
+    "clod": "Claude",         # whisper hears the name "Claude" as "clod"
+}
+_PHRASE_RE = re.compile(
+    r"\b(?:" + "|".join(
+        r"[\s-]+".join(map(re.escape, re.split(r"[\s-]+", k)))
+        for k in sorted(PHRASE_FIXES, key=len, reverse=True)
+    ) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def fix_phrases(text):
+    return _PHRASE_RE.sub(
+        lambda m: PHRASE_FIXES[re.sub(r"[\s-]+", " ", m.group(0).lower())], text
+    )
+
+
 def postprocess(text):
-    return lower_acronyms(fix_sudo(split_merged_acronyms(text)))
+    return fix_phrases(lower_acronyms(fix_sudo(split_merged_acronyms(text))))
 
 
 def http_transcribe(path, url, timeout=30):

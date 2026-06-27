@@ -196,6 +196,7 @@ PHRASE_FIXES = {
     "okie dokie": "okiedok",
     "okey dokie": "okiedok",
     "christ": "christ",       # keep the exclamation lowercase
+    "god": "god",             # keep the exclamation lowercase
     "clod": "Claude",         # whisper hears the name "Claude" as "clod"
 }
 _PHRASE_RE = re.compile(
@@ -213,8 +214,55 @@ def fix_phrases(text):
     )
 
 
+# Spoken punctuation: say the name of a mark and get the mark itself.
+# "hello comma world" -> "hello, world"; "wow bang" -> "wow!". The mark REPLACES
+# whatever punctuation whisper already glued around the spoken word, so saying a
+# "?" or "!" overrides the "." whisper guessed at the end of the sentence:
+# "are we done. Question mark" -> "are we done?" (not "are we done.?").
+# Note: "bang" and "period" are also ordinary words ("big bang", "grace period");
+# they'll be turned into marks too. Drop the entry if that bites.
+SPOKEN_PUNCT = {
+    "comma": ",",
+    "period": ".",
+    "full stop": ".",
+    "question mark": "?",
+    "exclamation mark": "!",
+    "exclamation point": "!",
+    "bang": "!",
+    "colon": ":",
+    "semicolon": ";",
+}
+# Whitespace + punctuation whisper may sprinkle around the spoken word; absorbed so
+# the spoken mark wins. A *run* of back-to-back spoken marks collapses to the LAST
+# one — say "bang" then "period" and you get "." not "!", so you can self-correct a
+# mark you didn't mean ("big bang period" -> "big.").
+_PUNCT_EDGE = ".,!?;:…"
+_PUNCT_WORDS = "|".join(
+    r"[\s-]+".join(map(re.escape, re.split(r"[\s-]+", k)))
+    for k in sorted(SPOKEN_PUNCT, key=len, reverse=True)
+)
+_PUNCT_WORD_RE = re.compile(r"\b(?:" + _PUNCT_WORDS + r")\b", re.IGNORECASE)
+_edge = r"[\s" + re.escape(_PUNCT_EDGE) + r"]"
+_PUNCT_RE = re.compile(
+    _edge + r"*"                                      # leading: glue to prev word
+    r"\b(?:" + _PUNCT_WORDS + r")\b"                  # first spoken mark
+    r"(?:" + _edge + r"+\b(?:" + _PUNCT_WORDS + r")\b)*"   # any adjacent marks
+    r"[" + re.escape(_PUNCT_EDGE) + r"]*",            # trailing punct (no spaces)
+    re.IGNORECASE,
+)
+
+
+def fix_spoken_punct(text):
+    def repl(m):
+        last = _PUNCT_WORD_RE.findall(m.group(0))[-1]
+        return SPOKEN_PUNCT[re.sub(r"[\s-]+", " ", last.lower())]
+    return _PUNCT_RE.sub(repl, text)
+
+
 def postprocess(text):
-    return fix_phrases(lower_acronyms(fix_sudo(split_merged_acronyms(text))))
+    return fix_spoken_punct(
+        fix_phrases(lower_acronyms(fix_sudo(split_merged_acronyms(text))))
+    )
 
 
 def http_transcribe(path, url, timeout=30):

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Push-to-talk dictation with a live on-screen preview.
 
-Hold Print Screen to record from the default mic; release to transcribe the clip
-and type the text into the focused window via ydotool.
+Hold Print Screen (or the Bluetooth mouse's forward/side button) to record from the
+default mic; release to transcribe the clip and type the text into the focused window
+via ydotool. The mouse button is read passively (no device grab), so it still performs
+its normal "forward" navigation too — harmless, since that's a no-op on most pages.
 
 Transcription goes to a warm whisper-server (model kept resident in RAM), so each
 call is fast with no per-call model load. While held, a background thread sends
@@ -15,6 +17,7 @@ hotkeys only fire on key-press, never release.
 """
 import os
 import re
+import time
 import signal
 import threading
 import subprocess
@@ -50,7 +53,11 @@ OVERLAY    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "preview-o
 RUNTIME    = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
 WAV        = f"{RUNTIME}/whisper-ptt.wav"
 SNAP       = f"{RUNTIME}/whisper-ptt.snap.wav"
-PTT_KEY    = ecodes.KEY_SYSRQ        # Print Screen
+PTT_KEY    = ecodes.KEY_SYSRQ        # Print Screen — keyboard trigger (laptop/touchpad)
+PTT_BTN    = ecodes.BTN_EXTRA        # Bluetooth mouse "forward"/side button — hold-to-talk
+PTT_CODES  = (PTT_KEY, PTT_BTN)
+TAP_SEC        = 0.25              # a PTT_BTN press shorter than this is a tap, not speech
+DOUBLE_TAP_SEC = 0.40             # two taps within this window send Enter (mouse-only convenience)
 PREVIEW_STEP     = 0.15             # seconds between preview passes (near back-to-back)
 PREVIEW_TAIL_SEC = 30               # preview transcribes the last N seconds (≈ whisper's own
                                     # window): accumulates for normal holds, caps runaway cost
@@ -104,24 +111,6 @@ def clean(text):
     text = re.sub(r"\[[^\]]*\]", "", text)   # [BLANK_AUDIO] and similar
     text = re.sub(r"\([^)]*\)", "", text)    # (silence) and similar
     return " ".join(text.split()).strip()
-
-
-def collapse_repeats(text, max_phrase=6):
-    """Collapse consecutive repeated word-phrases (tiny.en preview loop artifacts).
-    Preview-only — the typed text is never run through this."""
-    words = text.split()
-    changed = True
-    while changed:
-        changed = False
-        for L in range(1, max_phrase + 1):
-            i = 0
-            while i + 2 * L <= len(words):
-                if [w.lower() for w in words[i:i + L]] == [w.lower() for w in words[i + L:i + 2 * L]]:
-                    del words[i + L:i + 2 * L]
-                    changed = True
-                else:
-                    i += 1
-    return " ".join(words)
 
 
 # Texting acronyms whisper tends to capitalize; force them lowercase. Matching is
@@ -198,6 +187,7 @@ PHRASE_FIXES = {
     "christ": "christ",       # keep the exclamation lowercase
     "god": "god",             # keep the exclamation lowercase
     "clod": "Claude",         # whisper hears the name "Claude" as "clod"
+    "[name]": "[Name]",   # whisper mistypes the name "[Name]"
 }
 _PHRASE_RE = re.compile(
     r"\b(?:" + "|".join(
@@ -335,9 +325,14 @@ def snapshot_transcribe():
 
 
 def preview_loop():
+    # Hold off on the overlay until the press outlasts a tap, so the double-tap Enter
+    # gesture (quick taps) never flashes it; only genuine holds show the live preview.
+    if _preview_stop.wait(TAP_SEC):
+        return
+    overlay_start()
     while not _preview_stop.is_set():
         try:
-            text = postprocess(collapse_repeats(snapshot_transcribe()))
+            text = postprocess(snapshot_transcribe())
             if not _preview_stop.is_set() and text:
                 overlay_write(text)
         except Exception:
@@ -358,16 +353,16 @@ def start_recording():
     _rec = subprocess.Popen(
         ["pw-record", "--rate", "16000", "--channels", "1", "--format", "s16", WAV]
     )
-    overlay_start()
-    _preview_stop.clear()
+    _preview_stop.clear()               # preview_loop spawns the overlay once past TAP_SEC
     _preview_thread = threading.Thread(target=preview_loop, daemon=True)
     _preview_thread.start()
 
 
-def stop_and_type():
+def _stop_recording():
+    """Tear down pw-record and the preview thread. Returns True if one was running."""
     global _rec, _preview_thread
     if _rec is None:
-        return
+        return False
     _preview_stop.set()
     _rec.send_signal(signal.SIGINT)          # let pw-record flush the WAV header
     try:
@@ -378,16 +373,59 @@ def stop_and_type():
     if _preview_thread:
         _preview_thread.join(timeout=2)
         _preview_thread = None
+    return True
 
+
+def abort_recording():
+    """Discard an in-progress recording without transcribing — used for a quick tap,
+    which is the Enter gesture, not speech."""
+    if _stop_recording():
+        overlay_stop()                       # no-op if the overlay never appeared
+
+
+def send_keys(codes):
+    """Press+release each keycode in turn via ydotool."""
+    args = [YDOTOOL, "key"]
+    for c in codes:
+        args += [f"{c}:1", f"{c}:0"]
+    subprocess.run(args)
+
+
+def send_enter():
+    send_keys([ecodes.KEY_ENTER])
+
+
+# Spoken editing command: an utterance of just delete-words ("backspace" or "delete",
+# said one or more times; "back space" spelled either way) deletes that many characters
+# instead of typing them. Only fires when the WHOLE utterance is delete-words, so a
+# sentence that merely contains "delete"/"backspace" still types normally.
+DELETE_WORDS = {"backspace", "delete"}
+
+
+def spoken_deletes(text):
+    words = re.findall(r"[a-z]+", re.sub(r"\bback\s+space\b", "backspace", text.lower()))
+    return len(words) if words and all(w in DELETE_WORDS for w in words) else 0
+
+
+def stop_and_type():
+    if not _stop_recording():
+        return
     overlay_write("⏳ transcribing…")
     text = postprocess(transcribe(WAV, SERVER_URL, timeout=60))
     overlay_stop()
     if not text:
         return
+    n = spoken_deletes(text)
+    if n:
+        send_keys([ecodes.KEY_BACKSPACE] * n)
+        return
     subprocess.run([YDOTOOL, "type", "--key-delay", "4", "--key-hold", "2", "--", text + " "])
 
 
-def find_keyboards():
+def find_devices():
+    """Devices that report a PTT trigger — the keyboard (Print Screen) and the
+    mouse (forward/side button). The ydotool virtual device is skipped so injected
+    events can't trigger a recording."""
     devs = []
     for path in evdev.list_devices():
         try:
@@ -395,30 +433,70 @@ def find_keyboards():
         except Exception:
             continue
         keys = d.capabilities().get(ecodes.EV_KEY, [])
-        if PTT_KEY in keys and "ydotool" not in d.name.lower():
+        if any(c in keys for c in PTT_CODES) and "ydotool" not in d.name.lower():
             devs.append(d)
     return devs
 
 
 def main():
     sel = selectors.DefaultSelector()
-    kbds = find_keyboards()
-    if not kbds:
-        raise SystemExit("no readable keyboard with a Print Screen key")
-    for d in kbds:
-        sel.register(d, selectors.EVENT_READ)
+    registered = {}                      # device path -> InputDevice
+
+    def rescan():
+        # The keyboard is always present; the Bluetooth mouse's device node appears
+        # only once it connects, which can be after this process started — so we keep
+        # rescanning to pick it up (and its forward/side PTT button) when it shows up.
+        for d in find_devices():
+            if d.path not in registered:
+                try:
+                    sel.register(d, selectors.EVENT_READ)
+                    registered[d.path] = d
+                except Exception:
+                    pass
+
+    def drop(d):                         # device vanished (evsieve stopped, mouse unplugged)
+        try:
+            sel.unregister(d)
+        except Exception:
+            pass
+        registered.pop(d.path, None)
+        try:
+            d.close()
+        except Exception:
+            pass
+
+    press_at = {}                        # PTT code -> press timestamp
+    last_tap_at = 0.0                    # last quick tap of PTT_BTN, for double-tap detection
+    rescan()
     while True:
-        for key, _ in sel.select():
+        events = sel.select(timeout=4)
+        if not events:
+            rescan()                     # idle: pick up hotplugged devices
+            continue
+        for key, _ in events:
+            d = key.fileobj
             try:
-                for ev in key.fileobj.read():
-                    if ev.type == ecodes.EV_KEY and ev.code == PTT_KEY:
-                        if ev.value == 1:        # key down
-                            start_recording()
-                        elif ev.value == 0:      # key up
+                for ev in d.read():
+                    if ev.type != ecodes.EV_KEY or ev.code not in PTT_CODES:
+                        continue
+                    if ev.value == 1:                          # key down
+                        press_at[ev.code] = time.time()
+                        start_recording()
+                    elif ev.value == 0:                        # key up
+                        held = time.time() - press_at.pop(ev.code, time.time())
+                        if ev.code == PTT_BTN and held < TAP_SEC:
+                            abort_recording()                  # a tap isn't speech
+                            now = time.time()
+                            if now - last_tap_at < DOUBLE_TAP_SEC:
+                                send_enter()                   # second quick tap -> Enter
+                                last_tap_at = 0.0              # consume; a 3rd tap starts fresh
+                            else:
+                                last_tap_at = now
+                        else:
                             stop_and_type()
-                        # value == 2 (autorepeat while held) ignored
+                    # value == 2 (autorepeat while held) ignored
             except OSError:
-                pass
+                drop(d)
 
 
 if __name__ == "__main__":

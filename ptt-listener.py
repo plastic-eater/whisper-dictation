@@ -184,8 +184,6 @@ PHRASE_FIXES = {
     "okey doke": "okiedok",
     "okie dokie": "okiedok",
     "okey dokie": "okiedok",
-    "christ": "christ",       # keep the exclamation lowercase
-    "god": "god",             # keep the exclamation lowercase
     "clod": "Claude",         # whisper hears the name "Claude" as "clod"
     "[name]": "[Name]",   # whisper mistypes the name "[Name]"
 }
@@ -249,10 +247,27 @@ def fix_spoken_punct(text):
     return _PUNCT_RE.sub(repl, text)
 
 
+# Casual exclamations whisper capitalizes; lowercase them EXCEPT when they open a
+# sentence (start of the text, or after . ! ? …). So "oh jesus" -> "jesus", but a
+# sentence-initial "Jesus wept." keeps its capital. Add a word here to apply the rule.
+SENTENCE_AWARE_LOWER = {"jesus", "christ", "god"}
+_SAL_RE = re.compile(
+    r"\b(?:" + "|".join(map(re.escape, SENTENCE_AWARE_LOWER)) + r")\b", re.IGNORECASE
+)
+
+
+def lower_unless_sentence_start(text):
+    def repl(m):
+        prefix = text[:m.start()].rstrip()
+        word = m.group(0).lower()
+        return word.capitalize() if not prefix or prefix.endswith((".", "!", "?", "…")) else word
+    return _SAL_RE.sub(repl, text)
+
+
 def postprocess(text):
-    return fix_spoken_punct(
+    return lower_unless_sentence_start(fix_spoken_punct(
         fix_phrases(lower_acronyms(fix_sudo(split_merged_acronyms(text))))
-    )
+    ))
 
 
 def http_transcribe(path, url, timeout=30):

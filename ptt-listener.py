@@ -264,10 +264,21 @@ def lower_unless_sentence_start(text):
     return _SAL_RE.sub(repl, text)
 
 
+# Postprocessing pipeline, applied in order. Add a step (text -> text) to extend it.
+_POSTPROCESS_STEPS = (
+    split_merged_acronyms,        # "lolty" -> "lol ty"
+    fix_sudo,                     # "pseudo apt" -> "sudo apt"
+    lower_acronyms,               # "LOL" -> "lol"
+    fix_phrases,                  # "clod" -> "Claude"
+    fix_spoken_punct,             # "comma" -> ","
+    lower_unless_sentence_start,  # "oh Jesus" -> "oh jesus"
+)
+
+
 def postprocess(text):
-    return lower_unless_sentence_start(fix_spoken_punct(
-        fix_phrases(lower_acronyms(fix_sudo(split_merged_acronyms(text))))
-    ))
+    for step in _POSTPROCESS_STEPS:
+        text = step(text)
+    return text
 
 
 def http_transcribe(path, url, timeout=30):

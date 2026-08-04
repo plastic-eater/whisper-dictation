@@ -122,16 +122,10 @@ LOWERCASE_ACRONYMS = {
     "jk", "tldr", "fwiw", "ngl", "iykyk", "wyd", "hmu", "istg", "tmi", "afk",
     "rn", "ty", "np",   # "ty" also lowercases the name "Ty" — remove if that bites
 }
-_ACRONYM_RE = re.compile(
-    r"\b(?:" + "|".join(map(re.escape, LOWERCASE_ACRONYMS)) + r")\b", re.IGNORECASE
-)
 
 
 def lower_acronyms(text):
     return _ACRONYM_RE.sub(lambda m: m.group(0).lower(), text)
-
-
-_ACRONYMS_BY_LEN = sorted(LOWERCASE_ACRONYMS, key=len, reverse=True)
 
 
 def _decompose(tok):
@@ -177,23 +171,12 @@ def fix_sudo(text):
 
 
 # Literal phrase fixes: case-insensitive whole-phrase match -> fixed spelling.
-# Keys are lowercase; words may be separated by spaces or hyphens (whisper spells
-# the "okie doke" interjection several ways), and the separator matches either.
+# Keys are lowercase; words may be separated by spaces or hyphens, and the
+# separator matches either. This is the place to teach it the names and words
+# it reliably mishears — add yours via tuning_local.py (see below).
 PHRASE_FIXES = {
-    "okie doke": "okiedok",
-    "okey doke": "okiedok",
-    "okie dokie": "okiedok",
-    "okey dokie": "okiedok",
     "clod": "Claude",         # whisper hears the name "Claude" as "clod"
-    "[name]": "[Name]",   # whisper mistypes the name "[Name]"
 }
-_PHRASE_RE = re.compile(
-    r"\b(?:" + "|".join(
-        r"[\s-]+".join(map(re.escape, re.split(r"[\s-]+", k)))
-        for k in sorted(PHRASE_FIXES, key=len, reverse=True)
-    ) + r")\b",
-    re.IGNORECASE,
-)
 
 
 def fix_phrases(text):
@@ -225,19 +208,6 @@ SPOKEN_PUNCT = {
 # one — say "bang" then "period" and you get "." not "!", so you can self-correct a
 # mark you didn't mean ("big bang period" -> "big.").
 _PUNCT_EDGE = ".,!?;:…"
-_PUNCT_WORDS = "|".join(
-    r"[\s-]+".join(map(re.escape, re.split(r"[\s-]+", k)))
-    for k in sorted(SPOKEN_PUNCT, key=len, reverse=True)
-)
-_PUNCT_WORD_RE = re.compile(r"\b(?:" + _PUNCT_WORDS + r")\b", re.IGNORECASE)
-_edge = r"[\s" + re.escape(_PUNCT_EDGE) + r"]"
-_PUNCT_RE = re.compile(
-    _edge + r"*"                                      # leading: glue to prev word
-    r"\b(?:" + _PUNCT_WORDS + r")\b"                  # first spoken mark
-    r"(?:" + _edge + r"+\b(?:" + _PUNCT_WORDS + r")\b)*"   # any adjacent marks
-    r"[" + re.escape(_PUNCT_EDGE) + r"]*",            # trailing punct (no spaces)
-    re.IGNORECASE,
-)
 
 
 def fix_spoken_punct(text):
@@ -251,9 +221,6 @@ def fix_spoken_punct(text):
 # sentence (start of the text, or after . ! ? …). So "oh jesus" -> "jesus", but a
 # sentence-initial "Jesus wept." keeps its capital. Add a word here to apply the rule.
 SENTENCE_AWARE_LOWER = {"jesus", "christ", "god"}
-_SAL_RE = re.compile(
-    r"\b(?:" + "|".join(map(re.escape, SENTENCE_AWARE_LOWER)) + r")\b", re.IGNORECASE
-)
 
 
 def lower_unless_sentence_start(text):
@@ -262,6 +229,65 @@ def lower_unless_sentence_start(text):
         word = m.group(0).lower()
         return word.capitalize() if not prefix or prefix.endswith((".", "!", "?", "…")) else word
     return _SAL_RE.sub(repl, text)
+
+
+# Delete-words for the spoken-delete command (see spoken_deletes below).
+DELETE_WORDS = {"backspace", "delete"}
+
+
+# --- personal tuning ---------------------------------------------------------
+# Every table above (PHRASE_FIXES, LOWERCASE_ACRONYMS, SPOKEN_PUNCT,
+# SENTENCE_AWARE_LOWER, SHELL_COMMANDS, DELETE_WORDS) can be extended without
+# editing this file: copy tuning_local.example.py to tuning_local.py (gitignored,
+# so it never leaves your machine) and add entries there. They merge over the
+# built-ins at startup.
+def _load_local_tuning():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tuning_local.py")
+    if not os.path.exists(path):
+        return
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("tuning_local", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    for name in ("PHRASE_FIXES", "SPOKEN_PUNCT"):
+        globals()[name].update(getattr(mod, name, {}))
+    for name in ("LOWERCASE_ACRONYMS", "SENTENCE_AWARE_LOWER", "SHELL_COMMANDS", "DELETE_WORDS"):
+        globals()[name].update(getattr(mod, name, ()))
+
+
+def _phrase_pattern(keys):
+    """Alternation matching each key with spaces/hyphens interchangeable."""
+    return "|".join(
+        r"[\s-]+".join(map(re.escape, re.split(r"[\s-]+", k)))
+        for k in sorted(keys, key=len, reverse=True)
+    )
+
+
+def _compile_tables():
+    """Build the regexes derived from the tuning tables, after local overrides."""
+    global _ACRONYM_RE, _ACRONYMS_BY_LEN, _PHRASE_RE, _PUNCT_WORD_RE, _PUNCT_RE, _SAL_RE
+    _ACRONYM_RE = re.compile(
+        r"\b(?:" + "|".join(map(re.escape, LOWERCASE_ACRONYMS)) + r")\b", re.IGNORECASE
+    )
+    _ACRONYMS_BY_LEN = sorted(LOWERCASE_ACRONYMS, key=len, reverse=True)
+    _PHRASE_RE = re.compile(r"\b(?:" + _phrase_pattern(PHRASE_FIXES) + r")\b", re.IGNORECASE)
+    punct_words = _phrase_pattern(SPOKEN_PUNCT)
+    _PUNCT_WORD_RE = re.compile(r"\b(?:" + punct_words + r")\b", re.IGNORECASE)
+    edge = r"[\s" + re.escape(_PUNCT_EDGE) + r"]"
+    _PUNCT_RE = re.compile(
+        edge + r"*"                                      # leading: glue to prev word
+        r"\b(?:" + punct_words + r")\b"                  # first spoken mark
+        r"(?:" + edge + r"+\b(?:" + punct_words + r")\b)*"   # any adjacent marks
+        r"[" + re.escape(_PUNCT_EDGE) + r"]*",           # trailing punct (no spaces)
+        re.IGNORECASE,
+    )
+    _SAL_RE = re.compile(
+        r"\b(?:" + "|".join(map(re.escape, SENTENCE_AWARE_LOWER)) + r")\b", re.IGNORECASE
+    )
+
+
+_load_local_tuning()
+_compile_tables()
 
 
 # Postprocessing pipeline, applied in order. Add a step (text -> text) to extend it.
@@ -425,9 +451,6 @@ def send_enter():
 # said one or more times; "back space" spelled either way) deletes that many characters
 # instead of typing them. Only fires when the WHOLE utterance is delete-words, so a
 # sentence that merely contains "delete"/"backspace" still types normally.
-DELETE_WORDS = {"backspace", "delete"}
-
-
 def spoken_deletes(text):
     words = re.findall(r"[a-z]+", re.sub(r"\bback\s+space\b", "backspace", text.lower()))
     return len(words) if words and all(w in DELETE_WORDS for w in words) else 0

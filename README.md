@@ -64,6 +64,18 @@ journalctl --user -u whisper-ptt -f            # listener logs
 - **Accuracy vs speed:** swap the model in `~/.config/systemd/user/whisper-server.service`
   (base.en → small.en), then `systemctl --user restart whisper-server`.
 
+## Teaching it your words
+
+A postprocessing pipeline fixes what whisper reliably gets wrong: texting
+acronyms forced lowercase ("LOL" → "lol"), "pseudo apt" → "sudo apt", spoken
+punctuation ("question mark" → "?"), spoken deletes (say "backspace backspace"
+to delete two characters), and literal phrase fixes ("clod" → "Claude").
+
+To add your own — the names whisper misspells, your own capitalizations — copy
+`tuning_local.example.py` to `tuning_local.py` (gitignored, so your entries
+never leave your machine) and add entries; they merge over the built-ins at
+startup. Then `systemctl --user restart whisper-ptt`.
+
 ## Notes
 
 - The ydotoold socket is world-accessible (`0666`) so the listener can type via

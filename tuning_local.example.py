@@ -7,6 +7,7 @@
 #
 # Available tables (all optional):
 #   PHRASE_FIXES         dict  spoken phrase (lowercase) -> replacement text
+#   VOCAB                set   names/jargon whisper should expect (sent as its prompt)
 #   LOWERCASE_ACRONYMS   set   words to force lowercase ("LOL" -> "lol")
 #   SENTENCE_AWARE_LOWER set   lowercase unless the word opens a sentence
 #   SPOKEN_PUNCT         dict  spoken word -> punctuation mark
@@ -17,3 +18,7 @@
 PHRASE_FIXES = {
     "jean luc": "Jean-Luc",
 }
+
+# Names whisper should hear right in the first place. Spell them exactly as
+# you want them typed. Keep the list short (roughly 100 words max).
+VOCAB = {"Jean-Luc"}

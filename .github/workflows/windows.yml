@@ -62,6 +62,21 @@ jobs:
           $v = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}".TrimStart("v") } else { "0.0.0" }
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$v" windows\installer.iss
 
+      - name: Install, check login autostart, uninstall
+        shell: pwsh
+        run: |
+          $run = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+          Start-Process windows\dist\whisper-dictation-setup.exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES" -Wait
+          $exe = (Get-ItemProperty $run).WhisperDictation.Trim('"')
+          if (-not (Test-Path $exe)) { throw "autostart entry missing or points nowhere: '$exe'" }
+          Write-Output "autostart -> $exe"
+          $uninst = Join-Path (Split-Path $exe) "unins000.exe"
+          Start-Process $uninst -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES" -Wait
+          Start-Sleep 3
+          if ((Get-ItemProperty $run).PSObject.Properties.Name -contains "WhisperDictation") { throw "autostart entry left after uninstall" }
+          if (Test-Path $exe) { throw "app left after uninstall" }
+          Write-Output "uninstall removed app and autostart entry"
+
       - uses: actions/upload-artifact@v4
         with:
           name: whisper-dictation-setup

@@ -36,7 +36,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 ; First-run setup: downloads the engine, benchmarks, picks a model, then starts the app.
-Filename: "{app}\whisper-dictation.exe"; Parameters: "--setup"; Description: "Set up the speech engine"; Flags: postinstall nowait
+Filename: "{app}\whisper-dictation.exe"; Parameters: "--setup"; Description: "Set up the speech engine"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 Filename: "taskkill"; Parameters: "/F /IM whisper-dictation.exe"; Flags: runhidden; RunOnceId: "StopApp"

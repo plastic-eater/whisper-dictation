@@ -1,8 +1,11 @@
 [Unit]
-Description=whisper.cpp inference server (base.en, kept warm for dictation)
+Description=whisper.cpp inference server (kept warm for dictation)
 
+# Backend + model come from the config install.sh writes. systemd won't expand
+# variables in the program path itself, so the binary is launched through env.
 [Service]
-ExecStart=@ENGINE_DIR@/whisper.cpp/build/bin/whisper-server -m @ENGINE_DIR@/whisper.cpp/models/ggml-base.en.bin --host 127.0.0.1 --port 8910 -t 8 -nt
+EnvironmentFile=%h/.config/whisper-dictation/config
+ExecStart=/usr/bin/env @ENGINE_DIR@/whisper.cpp/build-${WHISPER_BACKEND}/bin/whisper-server -m @ENGINE_DIR@/whisper.cpp/models/ggml-${WHISPER_MODEL}.bin --host 127.0.0.1 --port 8910 -t 8 -nt
 Restart=always
 RestartSec=2
 

@@ -27,7 +27,7 @@ import urllib.request
 import evdev
 from evdev import ecodes
 
-SERVER_URL         = "http://127.0.0.1:8910/inference"   # base.en — used for both the final
+SERVER_URL         = "http://127.0.0.1:8910/inference"   # one model, used for both the final
 PREVIEW_SERVER_URL = SERVER_URL                          # typed text and the live preview
 
 
@@ -39,14 +39,29 @@ def _engine_dir():
         return os.path.expanduser(env)
     for c in ("~/.local/share/whisper-dictation", "~/Documents/Code"):
         p = os.path.expanduser(c)
-        if os.path.exists(f"{p}/whisper.cpp/build/bin/whisper-cli"):
+        if os.path.exists(f"{p}/whisper.cpp/models"):
             return p
     return os.path.expanduser("~/.local/share/whisper-dictation")
 
 
+def _engine_config():
+    """WHISPER_BACKEND / WHISPER_MODEL from the config install.sh writes; the
+    whisper-server unit reads the same file, so the fallback matches the server."""
+    cfg = {"WHISPER_BACKEND": "cpu", "WHISPER_MODEL": "base.en"}
+    try:
+        for line in open(os.path.expanduser("~/.config/whisper-dictation/config")):
+            k, sep, v = line.strip().partition("=")
+            if sep and not k.startswith("#"):
+                cfg[k] = v
+    except OSError:
+        pass
+    return cfg
+
+
 ENGINE_DIR = _engine_dir()
-WHISPER    = f"{ENGINE_DIR}/whisper.cpp/build/bin/whisper-cli"             # fallback engine
-MODEL      = f"{ENGINE_DIR}/whisper.cpp/models/ggml-base.en.bin"           # fallback model
+_CFG       = _engine_config()
+WHISPER    = f"{ENGINE_DIR}/whisper.cpp/build-{_CFG['WHISPER_BACKEND']}/bin/whisper-cli"  # fallback engine
+MODEL      = f"{ENGINE_DIR}/whisper.cpp/models/ggml-{_CFG['WHISPER_MODEL']}.bin"          # fallback model
 THREADS    = "12"                                                          # fallback
 YDOTOOL    = "/usr/local/bin/ydotool"
 OVERLAY    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "preview-overlay.py")

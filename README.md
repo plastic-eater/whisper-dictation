@@ -16,11 +16,13 @@ cd whisper-dictation
 ```
 
 `install.sh` installs deps, builds whisper.cpp + ydotool from source (the repo
-stays tiny — engines and models are fetched/built, not committed), downloads the
-`base.en` model, sets up the typing daemon, and enables the user services. **Log out and back in once** afterward (so the new `input` group takes
+stays tiny: engines and models are fetched/built, not committed), benchmarks CPU vs
+Vulkan (GPU), then benchmarks bigger models until one gets too slow for a live
+preview and lets you pick (recommending the biggest that keeps up), sets up the
+typing daemon, and enables the user services. **Log out and back in once** afterward (so the new `input` group takes
 effect), then hold Print Screen to dictate.
 
-Tested on Ubuntu 24.04 / GNOME Wayland, CPU-only.
+Tested on Ubuntu 24.04 / GNOME Wayland, CPU and Vulkan (Intel Iris Xe).
 
 ## How it works
 
@@ -31,7 +33,7 @@ overlay; only the final transcription on release is actually typed.
 - A listener (`ptt-listener.py`) reads the keyboard directly via evdev — Wayland
   hotkeys only fire on key *press*, never release, so this is the only way to get
   hold-to-talk. Needs the `input` group.
-- Transcription hits a warm **whisper-server** (base.en, model resident in RAM,
+- Transcription hits a warm **whisper-server** (model resident in RAM,
   no per-call load) on :8910 — used for both the typed text and the live preview,
   so the preview shows exactly what will be typed. Falls back to `whisper-cli` if
   the server is down.
@@ -46,7 +48,7 @@ overlay; only the final transcription on release is actually typed.
 | Service | Role |
 |---|---|
 | `whisper-ptt` (user) | the keyboard listener |
-| `whisper-server` (user) | base.en :8910 — typed text + live preview |
+| `whisper-server` (user) | :8910, typed text + live preview |
 | `ydotoold` (system) | virtual keyboard for typing |
 
 ```bash
@@ -61,8 +63,9 @@ journalctl --user -u whisper-ptt -f            # listener logs
 - **Preview cadence / window:** `PREVIEW_STEP`, `PREVIEW_TAIL_SEC` in `ptt-listener.py`.
 - **Hotkey:** `PTT_KEY` (`KEY_SYSRQ` = Print Screen) in `ptt-listener.py`.
 - **Typing speed:** the `--key-delay 4 --key-hold 2` args in `stop_and_type()`.
-- **Accuracy vs speed:** swap the model in `~/.config/systemd/user/whisper-server.service`
-  (base.en → small.en), then `systemctl --user restart whisper-server`.
+- **Accuracy vs speed / CPU vs GPU:** `WHISPER_MODEL` and `WHISPER_BACKEND` in
+  `~/.config/whisper-dictation/config` (written once by `install.sh` from a
+  benchmark), then `systemctl --user restart whisper-server whisper-ptt`.
 
 ## Teaching it your words
 

@@ -486,7 +486,10 @@ def stop_and_type():
     if not _stop_recording():
         return
     overlay_write("⏳ transcribing…")
-    text = postprocess(transcribe(WAV, SERVER_URL, timeout=60))
+    raw = transcribe(WAV, SERVER_URL, timeout=60)
+    text = postprocess(raw)
+    if text != raw:                     # to the journal, to see which fixes still fire
+        print(f"raw:   {raw}\ntyped: {text}", flush=True)
     overlay_stop()
     if not text:
         return

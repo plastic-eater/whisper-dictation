@@ -143,7 +143,24 @@ EOF
         if ask "Delete them? (switching to one later re-downloads it)"; then rm -f "${unused[@]}"; fi
     fi
 fi
-grep '^WHISPER_' "$CONFIG" | sed 's/^/    /'
+
+# Push-to-talk buttons, asked once: a config without them (including one from an
+# older install) keeps the defaults until answered here. Reading input devices
+# needs root until the new 'input' group takes effect at next login.
+if ! grep -q '^PTT_PRIMARY=' "$CONFIG"; then
+    echo "==> Push-to-talk buttons"
+    p=KEY_SYSRQ s=BTN_EXTRA
+    if [ -t 0 ] && picks=$(sudo python3 "$REPO_DIR/ptt-listener.py" --pick-ptt); then
+        read -r p s <<< "$picks"
+    fi
+    cat >> "$CONFIG" <<EOF
+# PTT_PRIMARY / PTT_SECONDARY: evdev key or button names (PTT_SECONDARY may be
+# none). To pick by pressing again, delete these lines and rerun install.sh.
+PTT_PRIMARY=$p
+PTT_SECONDARY=$s
+EOF
+fi
+grep -E '^(WHISPER|PTT)_' "$CONFIG" | sed 's/^/    /'
 
 # --- 3. ydotool (client + daemon; Ubuntu's package omits the daemon) --------
 echo "==> Building ydotool…"

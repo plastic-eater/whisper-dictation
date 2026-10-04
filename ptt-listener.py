@@ -55,10 +55,14 @@ OVERLAY    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "preview-o
 RUNTIME    = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
 WAV        = f"{RUNTIME}/whisper-ptt.wav"
 SNAP       = f"{RUNTIME}/whisper-ptt.snap.wav"
-PTT_KEY    = ecodes.KEY_SYSRQ        # Print Screen — keyboard trigger (laptop/touchpad)
-PTT_BTN    = ecodes.BTN_EXTRA        # Bluetooth mouse "forward"/side button — hold-to-talk
-PTT_CODES  = (PTT_KEY, PTT_BTN)
-TAP_SEC        = 0.25              # a PTT_BTN press shorter than this is a tap, not speech
+# Push-to-talk triggers: evdev names from the config install.sh writes (pick them
+# with --pick-ptt). Defaults are Print Screen and the mouse forward/side button;
+# a SECONDARY of "none" turns it off. Mouse buttons (BTN_*) also get the tap and
+# double-tap-Enter gestures; keyboard keys don't.
+PTT_NAMES  = [_CFG.get("PTT_PRIMARY", "KEY_SYSRQ"), _CFG.get("PTT_SECONDARY", "BTN_EXTRA")]
+PTT_CODES  = tuple(ecodes.ecodes[n] for n in PTT_NAMES if n in ecodes.ecodes)
+PTT_MOUSE  = {ecodes.ecodes[n] for n in PTT_NAMES if n.startswith("BTN_") and n in ecodes.ecodes}
+TAP_SEC        = 0.25              # a mouse-button press shorter than this is a tap, not speech
 DOUBLE_TAP_SEC = 0.40             # two taps within this window send Enter (mouse-only convenience)
 PREVIEW_STEP     = 0.15             # seconds between preview passes (near back-to-back)
 PREVIEW_TAIL_SEC = 30               # preview transcribes the last N seconds (≈ whisper's own
@@ -239,9 +243,8 @@ def stop_and_type():
 
 
 def find_devices():
-    """Devices that report a PTT trigger — the keyboard (Print Screen) and the
-    mouse (forward/side button). The ydotool virtual device is skipped so injected
-    events can't trigger a recording."""
+    """Devices that report a PTT trigger (keyboard and/or mouse). The ydotool
+    virtual device is skipped so injected events can't trigger a recording."""
     devs = []
     for path in evdev.list_devices():
         try:
@@ -282,7 +285,7 @@ def main():
             pass
 
     press_at = {}                        # PTT code -> press timestamp
-    last_tap_at = 0.0                    # last quick tap of PTT_BTN, for double-tap detection
+    last_tap_at = 0.0                    # last quick mouse-button tap, for double-tap detection
     rescan()
     while True:
         events = sel.select(timeout=4)
@@ -300,7 +303,7 @@ def main():
                         start_recording()
                     elif ev.value == 0:                        # key up
                         held = time.time() - press_at.pop(ev.code, time.time())
-                        if ev.code == PTT_BTN and held < TAP_SEC:
+                        if ev.code in PTT_MOUSE and held < TAP_SEC:
                             abort_recording()                  # a tap isn't speech
                             now = time.time()
                             if now - last_tap_at < DOUBLE_TAP_SEC:
@@ -315,5 +318,84 @@ def main():
                 drop(d)
 
 
+# --- choosing the buttons (install.sh) --------------------------------------
+# Typing keys (Esc through Caps Lock: letters, digits, punctuation, Enter, Space,
+# Shift, Ctrl, Alt), arrows, Super and the numpad are refused: the listener can't
+# block a key, so it would fire on ordinary typing.
+_REFUSED = set(range(ecodes.KEY_ESC, ecodes.KEY_CAPSLOCK + 1)) | set(range(ecodes.KEY_KP7, ecodes.KEY_KPDOT + 1)) | {
+    ecodes.KEY_UP, ecodes.KEY_DOWN, ecodes.KEY_LEFT, ecodes.KEY_RIGHT, ecodes.KEY_LEFTMETA,
+    ecodes.KEY_RIGHTMETA, ecodes.KEY_KPENTER, ecodes.KEY_KPSLASH, ecodes.KEY_KPASTERISK,
+}
+# Mouse buttons that make sense to hold. Everything else in the button range
+# (left/right click, touchpad touches and tool events) is ignored, so brushing
+# the touchpad doesn't count as a pick.
+_MOUSE_OK = {ecodes.BTN_MIDDLE, ecodes.BTN_SIDE, ecodes.BTN_EXTRA, ecodes.BTN_FORWARD,
+             ecodes.BTN_BACK, ecodes.BTN_TASK}
+
+
+def _code_name(code):
+    n = ecodes.KEY.get(code) or ecodes.BTN.get(code)
+    if isinstance(n, list):
+        n = next((x for x in n if "MIN_INTERESTING" not in x), n[0])
+    return n
+
+
+def pick_ptt():
+    """Ask for the primary and secondary trigger by having the user press them.
+    Prompts go to stderr; prints "PRIMARY SECONDARY" (evdev names) to stdout."""
+    import select
+    import sys
+    import termios
+    devs = []
+    for path in evdev.list_devices():
+        try:
+            d = evdev.InputDevice(path)
+        except Exception:
+            continue
+        if ecodes.EV_KEY in d.capabilities() and "ydotool" not in d.name.lower():
+            devs.append(d)
+    tty = sys.stdin.fileno()
+    saved = termios.tcgetattr(tty)
+    quiet = termios.tcgetattr(tty)
+    quiet[3] &= ~(termios.ECHO | termios.ICANON)       # keep presses off the screen
+    termios.tcsetattr(tty, termios.TCSANOW, quiet)
+
+    def capture(prompt, default, allow_none):
+        print(prompt, file=sys.stderr, flush=True)
+        while True:
+            for d in select.select(devs, [], [])[0]:
+                for ev in d.read():
+                    if ev.type != ecodes.EV_KEY or ev.value != 1:
+                        continue
+                    if ev.code == ecodes.KEY_ENTER:
+                        return default
+                    if ev.code == ecodes.KEY_ESC and allow_none:
+                        return "none"
+                    if ev.code in _MOUSE_OK or (ev.code not in _REFUSED and not
+                                                ecodes.BTN_MISC <= ev.code < ecodes.KEY_OK):
+                        return _code_name(ev.code)
+                    if ev.code in _REFUSED:
+                        print(f"    {_code_name(ev.code)} is a typing key; pick another.",
+                              file=sys.stderr, flush=True)
+
+    try:
+        primary = capture("    Press the key or mouse button to hold for dictation "
+                          "(Enter keeps Print Screen).", "KEY_SYSRQ", False)
+        print(f"    primary: {primary}", file=sys.stderr)
+        secondary = capture("    Press a second one, Enter for the mouse forward/side "
+                            "button, or Esc for none.", "BTN_EXTRA", True)
+        if secondary == primary:
+            secondary = "none"
+        print(f"    secondary: {secondary}", file=sys.stderr)
+    finally:
+        termios.tcflush(tty, termios.TCIFLUSH)          # drop the keystrokes the terminal also got
+        termios.tcsetattr(tty, termios.TCSANOW, saved)
+    print(primary, secondary)
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+    if "--pick-ptt" in sys.argv:
+        pick_ptt()
+    else:
+        main()

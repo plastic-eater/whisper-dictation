@@ -1,0 +1,89 @@
+name: windows
+
+# Builds whisper-dictation-setup.exe on a Windows runner. PRs get it as a
+# downloadable artifact; a v* tag attaches it to the GitHub release.
+on:
+  pull_request:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r windows/requirements.txt pyinstaller pytest
+
+      - name: Postprocess tests
+        run: python -m pytest -q tests
+
+      - name: Unattended first-run setup (CPU engine, base.en)
+        run: python -c "import sys; sys.path.insert(0, 'windows'); import first_run; first_run.run_setup()"
+
+      - name: Real transcription through whisper-server
+        shell: python
+        run: |
+          import os, subprocess, sys, time
+          sys.path.insert(0, ".")
+          from dictation_core import APP_DIR, SERVER_URL, http_transcribe
+          eng, model = os.path.join(APP_DIR, "engine", "cpu"), os.path.join(APP_DIR, "models", "ggml-base.en.bin")
+          srv = subprocess.Popen([os.path.join(eng, "whisper-server.exe"), "-m", model, "--host", "127.0.0.1", "--port", "8910", "-nt"])
+          text = None
+          for _ in range(60):
+              text = http_transcribe(os.path.join(APP_DIR, "jfk.wav"), SERVER_URL)
+              if text:
+                  break
+              time.sleep(1)
+          srv.kill()
+          print("transcribed:", text)
+          assert text and "ask not what your country" in text.lower(), text
+
+      - name: Build exe
+        working-directory: windows
+        run: pyinstaller --noconfirm whisper-dictation.spec
+
+      - name: Bundled exe self-test
+        shell: pwsh
+        run: |
+          $p = Start-Process windows\dist\whisper-dictation\whisper-dictation.exe -ArgumentList "--selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "selftest exit code $($p.ExitCode)" }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $v = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}".TrimStart("v") } else { "0.0.0" }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$v" windows\installer.iss
+
+      - name: Install, check login autostart, uninstall
+        shell: pwsh
+        run: |
+          $run = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+          Start-Process windows\dist\whisper-dictation-setup.exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES" -Wait
+          $exe = (Get-ItemProperty $run).WhisperDictation.Trim('"')
+          if (-not (Test-Path $exe)) { throw "autostart entry missing or points nowhere: '$exe'" }
+          Write-Output "autostart -> $exe"
+          $uninst = Join-Path (Split-Path $exe) "unins000.exe"
+          Start-Process $uninst -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES" -Wait
+          Start-Sleep 3
+          if ((Get-ItemProperty $run).PSObject.Properties.Name -contains "WhisperDictation") { throw "autostart entry left after uninstall" }
+          if (Test-Path $exe) { throw "app left after uninstall" }
+          Write-Output "uninstall removed app and autostart entry"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whisper-dictation-setup
+          path: windows/dist/whisper-dictation-setup.exe
+
+      - name: Attach to release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" windows/dist/whisper-dictation-setup.exe --generate-notes

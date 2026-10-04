@@ -1,9 +1,10 @@
 """Push-to-talk dictation for Windows: the counterpart of ptt-listener.py.
 
-Hold Insert (or the mouse forward/side button) to record from the default mic;
-release to transcribe and type the text into the focused window. Insert is
-swallowed so it never toggles overwrite mode; the mouse button is read
-passively, as on Linux, so it still does "forward" too.
+Hold the push-to-talk key (Insert by default) or mouse button (forward/side by
+default; both chosen in setup) to record from the default mic; release to
+transcribe and type the text into the focused window. The key is swallowed so
+it never does its normal job (Insert never toggles overwrite mode); the mouse
+button is read passively, as on Linux, so it still does "forward" too.
 
 The app starts its own whisper-server (there's no systemd here) inside a job
 object, so the server dies with the app. While a key is held, a background
@@ -34,7 +35,6 @@ PREVIEW_STEP     = 0.15    # seconds between preview passes (near back-to-back)
 PREVIEW_TAIL_SEC = 30      # preview transcribes the last N seconds (whisper's own window)
 RATE             = 16000
 THREADS          = str(min(8, os.cpu_count() or 4))
-VK_INSERT        = 0x2D
 LLKHF_INJECTED   = 0x10
 WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP = 0x100, 0x101, 0x104, 0x105
 
@@ -45,6 +45,12 @@ SNAP = os.path.join(tempfile.gettempdir(), "whisper-ptt.snap.wav")
 _CFG   = engine_config()
 ENGINE = os.path.join(APP_DIR, "engine", _CFG["WHISPER_BACKEND"])
 MODEL  = os.path.join(APP_DIR, "models", f"ggml-{_CFG['WHISPER_MODEL']}.bin")
+
+# Push-to-talk triggers from the config: "vk:0x2D" is a key by virtual-key code,
+# "mouse:x2" a pynput mouse button name, "none" turns the secondary off.
+PTT       = [_CFG.get("PTT_PRIMARY", "vk:0x2d"), _CFG.get("PTT_SECONDARY", "mouse:x2")]
+PTT_VKS   = {int(p[3:], 16) for p in PTT if p.startswith("vk:")}
+PTT_MOUSE = {p[6:] for p in PTT if p.startswith("mouse:")}
 
 _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 _u32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -329,7 +335,7 @@ class Dictation:
             self.start_recording()
             return
         held = t - self.press_at.pop(src, t)
-        if src == "mouse" and held < TAP_SEC:
+        if src.startswith("mouse:") and held < TAP_SEC:
             self.abort_recording()
             if t - self.last_tap_at < DOUBLE_TAP_SEC:
                 send_key("enter")
@@ -345,17 +351,18 @@ def start_hooks(d):
     kb_listener = None
 
     def kb_filter(msg, data):
-        if data.vkCode != VK_INSERT or data.flags & LLKHF_INJECTED:
+        if data.vkCode not in PTT_VKS or data.flags & LLKHF_INJECTED:
             return True
+        src = f"vk:{data.vkCode:#04x}"
         if msg in (WM_KEYDOWN, WM_SYSKEYDOWN):
-            d.events.put(("down", "key", time.time()))
+            d.events.put(("down", src, time.time()))
         elif msg in (WM_KEYUP, WM_SYSKEYUP):
-            d.events.put(("up", "key", time.time()))
-        kb_listener.suppress_event()          # swallow Insert so overwrite mode never toggles
+            d.events.put(("up", src, time.time()))
+        kb_listener.suppress_event()          # swallow the key so it never does its normal job
 
     def on_click(x, y, button, pressed):
-        if button == mouse.Button.x2:
-            d.events.put(("down" if pressed else "up", "mouse", time.time()))
+        if button.name in PTT_MOUSE:
+            d.events.put(("down" if pressed else "up", f"mouse:{button.name}", time.time()))
 
     kb_listener = keyboard.Listener(win32_event_filter=kb_filter)
     kb_listener.start()

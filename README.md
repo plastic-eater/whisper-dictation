@@ -20,7 +20,9 @@ stays tiny: engines and models are fetched/built, not committed), benchmarks CPU
 Vulkan (GPU), then benchmarks bigger models until one gets too slow for a live
 preview and lets you pick (recommending the biggest that keeps up), sets up the
 typing daemon, and enables the user services. **Log out and back in once** afterward (so the new `input` group takes
-effect), then hold Print Screen to dictate.
+effect), then hold your push-to-talk key to dictate. The installer asks you to
+press the key (and optionally a second key or mouse button) you want; Enter
+keeps the defaults, Print Screen and the mouse forward/side button.
 
 Tested on Ubuntu 24.04 / GNOME Wayland, CPU and Vulkan (Intel Iris Xe).
 
@@ -32,8 +34,11 @@ downloads the speech engine (the NVIDIA GPU build too if you have one, after
 asking, since it's ~640 MB), benchmarks it, lets you pick a model, and starts
 dictation. It also starts at login.
 
-- Hold **Insert** (or the mouse forward/side button) to dictate. Insert is
-  blocked while the app runs, so it never toggles overwrite mode.
+- Setup asks you to press your push-to-talk key, plus an optional second key or
+  mouse button; Enter keeps the defaults, **Insert** and the mouse
+  forward/side button. The key is blocked while the app runs, so it never does
+  its normal job (Insert never toggles overwrite mode). Change them later by
+  rerunning "Whisper Dictation Setup".
 - Settings, `tuning_local.py` and `dictation.log` live in
   `%LOCALAPPDATA%\whisper-dictation` (Start menu: "Whisper Dictation Settings").
   After editing, rerun "Whisper Dictation Setup", which restarts the app.
@@ -79,7 +84,10 @@ journalctl --user -u whisper-ptt -f            # listener logs
 - **Preview transparency / look:** `BG_ALPHA`, font, position, `MAX_CHARS` — top
   of `preview-overlay.py`. `BG_ALPHA` only affects the background; text stays solid.
 - **Preview cadence / window:** `PREVIEW_STEP`, `PREVIEW_TAIL_SEC` in `ptt-listener.py`.
-- **Hotkey:** `PTT_KEY` (`KEY_SYSRQ` = Print Screen) in `ptt-listener.py`.
+- **Push-to-talk buttons:** `PTT_PRIMARY` / `PTT_SECONDARY` (evdev names like
+  `KEY_SYSRQ`, `BTN_EXTRA`, or `none`) in `~/.config/whisper-dictation/config`.
+  To pick by pressing again, delete those lines and rerun `install.sh`. Linux
+  can't block the key, so it still does its normal job; pick one you don't use.
 - **Typing speed:** the `--key-delay 4 --key-hold 2` args in `stop_and_type()`.
 - **Accuracy vs speed / CPU vs GPU:** `WHISPER_MODEL` and `WHISPER_BACKEND` in
   `~/.config/whisper-dictation/config` (written once by `install.sh` from a

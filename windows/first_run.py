@@ -14,7 +14,7 @@ import urllib.request
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # source runs: core is at the repo root
-from dictation_core import APP_DIR, CONFIG  # noqa: E402
+from dictation_core import APP_DIR, CONFIG, engine_config  # noqa: E402
 
 ENGINE_TAG = "b5130"      # whisper.cpp release whose prebuilt Windows binaries we use
 RELEASE    = f"https://github.com/ggml-org/whisper.cpp/releases/download/{ENGINE_TAG}"
@@ -128,13 +128,21 @@ def bench(backend, model):
     return min(once() for _ in range(3))
 
 
-def write_config(backend, model):
+CONFIG_KEYS = ("WHISPER_BACKEND", "WHISPER_MODEL", "PTT_PRIMARY", "PTT_SECONDARY")
+
+
+def write_config(**updates):
+    """Set the given keys, keeping the others already in the config."""
+    cfg = engine_config() if os.path.exists(CONFIG) else {}
+    cfg.update(updates)
     with open(CONFIG, "w") as f:
-        f.write("# whisper-dictation engine settings. After editing, quit and restart\n"
-                "# Whisper Dictation, or rerun \"Whisper Dictation Setup\".\n"
+        f.write("# whisper-dictation settings. After editing, rerun \"Whisper Dictation\n"
+                "# Setup\" (or quit and restart Whisper Dictation).\n"
                 "# WHISPER_BACKEND: cpu, or cuda (NVIDIA; only if setup downloaded it)\n"
                 f"# WHISPER_MODEL:   {' '.join(MODELS)}\n"
-                f"WHISPER_BACKEND={backend}\nWHISPER_MODEL={model}\n")
+                "# PTT_PRIMARY / PTT_SECONDARY: vk:0x2D style key codes, mouse:x1, mouse:x2,\n"
+                "#                  mouse:middle, or none (secondary only)\n")
+        f.writelines(f"{k}={cfg[k]}\n" for k in CONFIG_KEYS if k in cfg)
 
 
 def pick():
@@ -180,7 +188,7 @@ def pick():
     choice = input(f"    Choice [{rec + 1}]: ").strip() if sys.stdin.isatty() else ""
     model = MODELS[int(choice) - 1] if choice.isdigit() and 1 <= int(choice) <= len(MODELS) else MODELS[rec]
     fetch_model(model)
-    write_config(backend, model)
+    write_config(WHISPER_BACKEND=backend, WHISPER_MODEL=model)
 
     # Offer to reclaim the disk the benchmark (or earlier setups) used.
     unused = [os.path.join(MODEL_DIR, f) for f in os.listdir(MODEL_DIR)
@@ -207,12 +215,96 @@ def _seed_tuning():
         shutil.copy(src, dest)
 
 
-def _restart_app():
-    """Stop any running copy (it holds the old config) and start a fresh one."""
+# --- push-to-talk buttons ---------------------------------------------------
+# Keys refused as triggers, since the app swallows its key and typing would
+# break: Backspace, Tab, Enter, Esc, Shift/Ctrl/Alt (right Ctrl and right Alt are
+# allowed), Caps Lock, Space, arrows, Windows keys, letters, digits, numpad,
+# punctuation.
+_REFUSED = ({0x08, 0x09, 0x0D, 0x1B, 0x10, 0x11, 0x12, 0x14, 0x20, 0x25, 0x26, 0x27, 0x28, 0x5B, 0x5C,
+             0xA0, 0xA1, 0xA2, 0xA4, 0xE2}
+            | set(range(0x30, 0x5B)) | set(range(0x60, 0x70))
+            | set(range(0xBA, 0xC1)) | set(range(0xDB, 0xE0)))
+_MOUSE_LABELS = {"x1": "mouse back button", "x2": "mouse forward/side button",
+                 "middle": "middle mouse button"}
+
+
+def ptt_label(p):
+    if p == "none":
+        return "none"
+    if p.startswith("mouse:"):
+        return _MOUSE_LABELS.get(p[6:], p)
+    from pynput.keyboard import Key
+    vk = int(p[3:], 16)
+    if 0x30 <= vk <= 0x5A:
+        return f"'{chr(vk)}'"
+    for k in Key:
+        if getattr(k.value, "vk", None) == vk:
+            return k.name.replace("_", " ").title()
+    return f"key {p[3:]}"
+
+
+def pick_ptt():
+    """Ask for the primary and secondary trigger by having the user press them.
+    While picking, every keypress is swallowed so none reach the console."""
+    import queue
+    from pynput import keyboard, mouse
+    presses = queue.Queue()
+
+    def kb_filter(msg, data):
+        if msg in (0x100, 0x104) and not data.flags & 0x10:      # key down, not injected
+            presses.put(f"vk:{data.vkCode:#04x}")
+        kl.suppress_event()
+
+    def mouse_filter(msg, data):
+        if msg in (0x207, 0x20B):                                 # middle / X button down
+            presses.put("mouse:middle" if msg == 0x207 else f"mouse:x{data.mouseData >> 16}")
+        if msg in (0x207, 0x208, 0x20B, 0x20C):
+            ml.suppress_event()
+        return True
+
+    kl = keyboard.Listener(win32_event_filter=kb_filter)
+    ml = mouse.Listener(win32_event_filter=mouse_filter)
+    kl.start()
+    ml.start()
+
+    def capture(prompt, default, allow_none):
+        print(f"    {prompt}", flush=True)
+        while True:
+            p = presses.get()
+            if p == "vk:0x0d":
+                return default
+            if p == "vk:0x1b" and allow_none:
+                return "none"
+            if p.startswith("mouse:") or int(p[3:], 16) not in _REFUSED:
+                return p
+            print(f"    {ptt_label(p)} is a typing key; pick another.", flush=True)
+
+    try:
+        primary = capture("Press the key or mouse button to hold for dictation "
+                          "(Enter keeps Insert).", "vk:0x2d", False)
+        print(f"      primary: {ptt_label(primary)}")
+        secondary = capture("Press a second one, Enter for the mouse forward/side button, "
+                            "or Esc for none.", "mouse:x2", True)
+        if secondary == primary:
+            secondary = "none"
+        print(f"      secondary: {ptt_label(secondary)}")
+    finally:
+        kl.stop()
+        ml.stop()
+    write_config(PTT_PRIMARY=primary, PTT_SECONDARY=secondary)
+
+
+def _stop_app():
+    """Stop a running copy: it holds the old config, and its key hook would
+    swallow presses meant for the picker."""
     if getattr(sys, "frozen", False):
         exe = os.path.basename(sys.executable)
         subprocess.run(["taskkill", "/F", "/IM", exe, "/FI", f"PID ne {os.getpid()}"],
                        capture_output=True, creationflags=NO_WINDOW)
+
+
+def _start_app():
+    if getattr(sys, "frozen", False):
         subprocess.Popen([sys.executable], creationflags=subprocess.DETACHED_PROCESS)
     else:
         print("    (source run: start the app with  python windows\\dictation.py)")
@@ -221,14 +313,26 @@ def _restart_app():
 def run_setup():
     _console()
     print("==> Whisper Dictation setup")
+    _stop_app()
     os.makedirs(APP_DIR, exist_ok=True)
     _seed_tuning()
     if not os.path.exists(CONFIG) or ask("Already set up. Benchmark and pick a model again?"):
         pick()
-    with open(CONFIG) as f:
-        print("".join(f"    {line}" for line in f if line.startswith("WHISPER_")), end="")
+    cfg = engine_config()
+    if "PTT_PRIMARY" not in cfg or ask(
+            f"Push-to-talk is {ptt_label(cfg['PTT_PRIMARY'])} + {ptt_label(cfg.get('PTT_SECONDARY', 'none'))}. "
+            "Change it?"):
+        print("==> Push-to-talk buttons")
+        if sys.stdin.isatty():
+            pick_ptt()
+        else:
+            write_config(PTT_PRIMARY="vk:0x2d", PTT_SECONDARY="mouse:x2")
+    cfg = engine_config()
+    for k in CONFIG_KEYS:
+        print(f"    {k}={cfg.get(k, '')}")
     print(f"    Settings and tuning_local.py live in {APP_DIR}")
-    print("    Hold Insert (or the mouse side button) to dictate.")
-    _restart_app()
+    print(f"    Hold {ptt_label(cfg['PTT_PRIMARY'])} to dictate"
+          + ("." if cfg.get("PTT_SECONDARY", "none") == "none" else f" (or the {ptt_label(cfg['PTT_SECONDARY'])})."))
+    _start_app()
     if sys.stdin.isatty():
         input("    Press Enter to close.")

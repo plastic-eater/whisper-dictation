@@ -24,6 +24,24 @@ effect), then hold Print Screen to dictate.
 
 Tested on Ubuntu 24.04 / GNOME Wayland, CPU and Vulkan (Intel Iris Xe).
 
+## Windows
+
+Download `whisper-dictation-setup.exe` from the latest GitHub release and run
+it. It installs per-user (no admin prompt), then opens first-run setup: it
+downloads the speech engine (the NVIDIA GPU build too if you have one, after
+asking, since it's ~640 MB), benchmarks it, lets you pick a model, and starts
+dictation. It also starts at login.
+
+- Hold **Insert** (or the mouse forward/side button) to dictate. Insert is
+  blocked while the app runs, so it never toggles overwrite mode.
+- Settings, `tuning_local.py` and `dictation.log` live in
+  `%LOCALAPPDATA%\whisper-dictation` (Start menu: "Whisper Dictation Settings").
+  After editing, rerun "Whisper Dictation Setup", which restarts the app.
+- The installer isn't code-signed yet, so Windows shows "Windows protected
+  your PC": click **More info**, then **Run anyway**.
+- Dictation can't type into windows running as administrator; Windows blocks it.
+- Uninstall from Settings > Apps. Your config and `tuning_local.py` are kept.
+
 ## How it works
 
 On release the clip is transcribed and typed into the focused window. While you

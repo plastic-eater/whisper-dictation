@@ -74,6 +74,11 @@ acronyms forced lowercase ("LOL" → "lol"), "pseudo apt" → "sudo apt", spoken
 punctuation ("question mark" → "?"), spoken deletes (say "backspace backspace"
 to delete two characters), and literal phrase fixes ("clod" → "Claude").
 
+Names and jargon go one step earlier: `VOCAB` is sent to whisper as its prompt,
+so it expects those spellings while transcribing instead of being corrected
+afterward. It's capped at about 100 words, so it's for the names you use most;
+`PHRASE_FIXES` stays as the backstop.
+
 To add your own — the names whisper misspells, your own capitalizations — copy
 `tuning_local.example.py` to `tuning_local.py` (gitignored, so your entries
 never leave your machine) and add entries; they merge over the built-ins at

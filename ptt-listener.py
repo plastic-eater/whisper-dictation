@@ -194,6 +194,14 @@ PHRASE_FIXES = {
 }
 
 
+# Words whisper should expect (names, jargon). Sent as its initial prompt, so it
+# leans toward these spellings while decoding, where PHRASE_FIXES patches the
+# text afterward. Keep it short: whisper reads at most ~224 tokens of it (about
+# 100 words), and a longer list makes it likelier to hallucinate a listed word
+# into silence. Formatting rules (punctuation, lowercasing) belong in the tables.
+VOCAB = {"Claude", "sudo"}
+
+
 def fix_phrases(text):
     return _PHRASE_RE.sub(
         lambda m: PHRASE_FIXES[re.sub(r"[\s-]+", " ", m.group(0).lower())], text
@@ -251,7 +259,7 @@ DELETE_WORDS = {"backspace", "delete"}
 
 
 # --- personal tuning ---------------------------------------------------------
-# Every table above (PHRASE_FIXES, LOWERCASE_ACRONYMS, SPOKEN_PUNCT,
+# Every table above (PHRASE_FIXES, VOCAB, LOWERCASE_ACRONYMS, SPOKEN_PUNCT,
 # SENTENCE_AWARE_LOWER, SHELL_COMMANDS, DELETE_WORDS) can be extended without
 # editing this file: copy tuning_local.example.py to tuning_local.py (gitignored,
 # so it never leaves your machine) and add entries there. They merge over the
@@ -266,7 +274,7 @@ def _load_local_tuning():
     spec.loader.exec_module(mod)
     for name in ("PHRASE_FIXES", "SPOKEN_PUNCT"):
         globals()[name].update(getattr(mod, name, {}))
-    for name in ("LOWERCASE_ACRONYMS", "SENTENCE_AWARE_LOWER", "SHELL_COMMANDS", "DELETE_WORDS"):
+    for name in ("VOCAB", "LOWERCASE_ACRONYMS", "SENTENCE_AWARE_LOWER", "SHELL_COMMANDS", "DELETE_WORDS"):
         globals()[name].update(getattr(mod, name, ()))
 
 
@@ -280,7 +288,8 @@ def _phrase_pattern(keys):
 
 def _compile_tables():
     """Build the regexes derived from the tuning tables, after local overrides."""
-    global _ACRONYM_RE, _ACRONYMS_BY_LEN, _PHRASE_RE, _PUNCT_WORD_RE, _PUNCT_RE, _SAL_RE
+    global _ACRONYM_RE, _ACRONYMS_BY_LEN, _PHRASE_RE, _PUNCT_WORD_RE, _PUNCT_RE, _SAL_RE, _PROMPT
+    _PROMPT = ", ".join(sorted(VOCAB, key=str.lower)) + "." if VOCAB else ""
     _ACRONYM_RE = re.compile(
         r"\b(?:" + "|".join(map(re.escape, LOWERCASE_ACRONYMS)) + r")\b", re.IGNORECASE
     )
@@ -336,6 +345,8 @@ def http_transcribe(path, url, timeout=30):
         f"--{boundary}{crlf}"
         f'Content-Disposition: form-data; name="response_format"{crlf}{crlf}text{crlf}'
         f"--{boundary}{crlf}"
+        f'Content-Disposition: form-data; name="prompt"{crlf}{crlf}{_PROMPT}{crlf}'
+        f"--{boundary}{crlf}"
         f'Content-Disposition: form-data; name="file"; filename="a.wav"{crlf}'
         f"Content-Type: audio/wav{crlf}{crlf}"
     ).encode()
@@ -354,7 +365,7 @@ def http_transcribe(path, url, timeout=30):
 def cli_transcribe(path):
     try:
         out = subprocess.run(
-            [WHISPER, "-m", MODEL, "-f", path, "-nt", "-np", "-t", THREADS],
+            [WHISPER, "-m", MODEL, "-f", path, "-nt", "-np", "-t", THREADS, "--prompt", _PROMPT],
             capture_output=True, text=True, timeout=120,
         ).stdout
     except Exception:

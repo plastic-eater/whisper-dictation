@@ -64,6 +64,7 @@ jobs:
           got = [D.events.get(timeout=3)[:2] for _ in range(2)]
           print("events:", got)
           assert got == [("down", "vk:0x2d"), ("up", "vk:0x2d")], got
+
       - name: Preview overlay recovers after Windows hides it
         shell: python
         run: |
@@ -120,6 +121,21 @@ jobs:
           if ((Get-ItemProperty $run).PSObject.Properties.Name -contains "WhisperDictation") { throw "autostart entry left after uninstall" }
           if (Test-Path $exe) { throw "app left after uninstall" }
           Write-Output "uninstall removed app and autostart entry"
+
+      - name: Updater's silent install relaunches the app
+        shell: pwsh
+        run: |
+          # -Wait would also wait on the relaunched app, which never exits; wait on setup alone.
+          (Start-Process windows\dist\whisper-dictation-setup.exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/relaunch=1" -PassThru).WaitForExit()
+          Start-Sleep 5
+          $p = Get-Process whisper-dictation -ErrorAction SilentlyContinue
+          if (-not $p) { throw "app not running after /relaunch=1 install" }
+          Write-Output "relaunched: pid $($p[0].Id)"
+          $v = python -c "import sys; sys.path.insert(0, 'windows'); import dictation; print(dictation.installed_version())"
+          if ($v -ne "0.0.0") { throw "installed_version() read '$v', expected 0.0.0" }
+          Write-Output "installed_version() -> $v"
+          $exe = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run").WhisperDictation.Trim('"')
+          Start-Process (Join-Path (Split-Path $exe) "unins000.exe") -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES" -Wait
 
       - uses: actions/upload-artifact@v4
         with:

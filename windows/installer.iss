@@ -37,6 +37,8 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 [Run]
 ; First-run setup: downloads the engine, benchmarks, picks a model, then starts the app.
 Filename: "{app}\whisper-dictation.exe"; Parameters: "--setup"; Description: "Set up the speech engine"; Flags: postinstall nowait skipifsilent
+; The app's updater installs silently with /relaunch=1, then expects to be started again.
+Filename: "{app}\whisper-dictation.exe"; Flags: nowait; Check: Relaunch
 
 [UninstallRun]
 Filename: "taskkill"; Parameters: "/F /IM whisper-dictation.exe"; Flags: runhidden; RunOnceId: "StopApp"
@@ -47,3 +49,9 @@ Type: filesandordirs; Name: "{localappdata}\whisper-dictation\engine"
 Type: filesandordirs; Name: "{localappdata}\whisper-dictation\models"
 Type: files; Name: "{localappdata}\whisper-dictation\jfk.wav"
 Type: files; Name: "{localappdata}\whisper-dictation\dictation.log"
+
+[Code]
+function Relaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|0}') = '1';
+end;

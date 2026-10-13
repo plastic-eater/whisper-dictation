@@ -13,6 +13,7 @@ thread transcribes snapshots of the audio for a focus-safe preview overlay.
 Run with --setup for first-run setup (engine download, benchmark, model pick).
 """
 import ctypes
+import json
 import os
 import queue
 import subprocess
@@ -20,6 +21,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.request
 import wave
 from ctypes import wintypes
 
@@ -35,6 +37,7 @@ PREVIEW_STEP     = 0.15    # seconds between preview passes (near back-to-back)
 PREVIEW_TAIL_SEC = 30      # preview transcribes the last N seconds (whisper's own window)
 RATE             = 16000
 THREADS          = str(min(8, os.cpu_count() or 4))
+UPDATE_EVERY     = 24 * 3600   # seconds between checks for a newer release
 MOD_NOREPEAT     = 0x4000
 WM_HOTKEY        = 0x0312
 
@@ -396,6 +399,68 @@ def start_hooks(d):
     mouse.Listener(on_click=on_click).start()
 
 
+# --- updates ----------------------------------------------------------------
+RELEASES      = "https://api.github.com/repos/plastic-eater/whisper-dictation/releases/latest"
+SETUP_ASSET   = "whisper-dictation-setup.exe"
+UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{6C1F4B52-8E0B-4E52-9B8A-3D9C2F1A7E41}_is1"
+
+
+def installed_version():
+    """The version the installer recorded; None for a source run."""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY) as k:
+            return winreg.QueryValueEx(k, "DisplayVersion")[0]
+    except OSError:
+        return None
+
+
+def _ver(v):
+    return tuple(int(x) for x in v.lstrip("v").split("."))
+
+
+def latest_release():
+    """(version, setup.exe url) of the newest GitHub release."""
+    with urllib.request.urlopen(RELEASES, timeout=20) as r:
+        rel = json.load(r)
+    url = next(a["browser_download_url"] for a in rel["assets"] if a["name"] == SETUP_ASSET)
+    return rel["tag_name"].lstrip("v"), url
+
+
+def update_loop(d):
+    """Once at startup and then daily: if a newer release exists, ask, and on yes
+    run its installer silently. The installer closes this app and starts the new one."""
+    current = installed_version()
+    if current in (None, "0.0.0"):            # source run or untagged PR build
+        return
+    declined = set()
+    time.sleep(60)                            # let startup finish first
+    while True:
+        try:
+            latest, url = latest_release()
+            if _ver(latest) > _ver(current) and latest not in declined:
+                while d.recording:            # never interrupt a dictation
+                    time.sleep(5)
+                # MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST:
+                # No is the default, so a stray Enter while typing never installs.
+                answer = _u32.MessageBoxW(
+                    None, f"Whisper Dictation {latest} is available (you have {current}).\n\n"
+                          "Update now? Dictation restarts in a few seconds.",
+                    "Whisper Dictation update", 0x4 | 0x20 | 0x100 | 0x10000 | 0x40000)
+                if answer != 6:                                   # IDYES
+                    declined.add(latest)
+                else:
+                    setup = os.path.join(tempfile.gettempdir(), SETUP_ASSET)
+                    urllib.request.urlretrieve(url, setup)
+                    print(f"update: {current} -> {latest}", flush=True)
+                    subprocess.Popen([setup, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/relaunch=1"])
+                    os._exit(0)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+        time.sleep(UPDATE_EVERY)
+
+
 # --- app --------------------------------------------------------------------
 def _single_instance():
     """Hold a named mutex for our lifetime; False if another copy holds it."""
@@ -431,6 +496,7 @@ def main():
     d = Dictation(overlay)
     threading.Thread(target=d.run, daemon=True).start()
     start_hooks(d)
+    threading.Thread(target=update_loop, args=(d,), daemon=True).start()
     overlay.root.mainloop()
 
 

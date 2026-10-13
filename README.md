@@ -45,6 +45,8 @@ dictation. It also starts at login.
 - The installer isn't code-signed yet, so Windows shows "Windows protected
   your PC": click **More info**, then **Run anyway**.
 - Dictation can't type into windows running as administrator; Windows blocks it.
+- It checks GitHub for a newer release at startup and once a day, and asks
+  before installing it; yes updates and restarts it in a few seconds.
 - Uninstall from Settings > Apps. Your config and `tuning_local.py` are kept.
 
 ## How it works

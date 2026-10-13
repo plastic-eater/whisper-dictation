@@ -45,6 +45,31 @@ jobs:
           print("transcribed:", text)
           assert text and "ask not what your country" in text.lower(), text
 
+      - name: Preview overlay recovers after Windows hides it
+        shell: python
+        run: |
+          import ctypes, sys, time
+          from ctypes import wintypes
+          sys.path.insert(0, "windows")
+          import dictation
+          u = ctypes.windll.user32
+          u.GetForegroundWindow.restype = wintypes.HWND
+          o = dictation.Overlay()
+          h = wintypes.HWND(o.hwnd)
+          for case, wreck in [("minimized", lambda: u.ShowWindow(h, 6)),
+                              ("hidden", lambda: u.ShowWindow(h, 0)),
+                              ("not topmost", lambda: u.SetWindowPos(h, wintypes.HWND(-2), 0, 0, 0, 0, 0x1 | 0x2 | 0x10))]:
+              o.root.update()
+              wreck()
+              o.show("hello")
+              end = time.time() + 1
+              while time.time() < end:
+                  o.root.update()
+              state = (bool(u.IsIconic(h)), bool(u.IsWindowVisible(h)), bool(u.GetWindowLongW(h, -20) & 0x8))
+              print(case, "-> iconic, visible, topmost:", state)
+              assert state == (False, True, True), case
+              assert u.GetForegroundWindow() != o.hwnd, f"{case}: overlay took focus"
+
       - name: Build exe
         working-directory: windows
         run: pyinstaller --noconfirm whisper-dictation.spec

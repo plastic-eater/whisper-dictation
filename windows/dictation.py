@@ -188,7 +188,7 @@ class Overlay:
         self.label.pack(fill="both", expand=True)
         self.root.update_idletasks()
         _u32.GetParent.restype = wintypes.HWND
-        hwnd = _u32.GetParent(self.root.winfo_id())
+        self.hwnd = hwnd = _u32.GetParent(self.root.winfo_id())
         GWL_EXSTYLE = -20
         style = _u32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         # NOACTIVATE: never takes focus. TOOLWINDOW: no taskbar button. TRANSPARENT: clicks pass through.
@@ -216,10 +216,28 @@ class Overlay:
                 self.label.configure(text="🎙  " + text)
                 self.root.update_idletasks()
                 self.root.geometry(f"{self.width}x{self.label.winfo_reqheight()}+{self.x}+56")
+                self._restore()
                 self.root.attributes("-alpha", self.ALPHA)
         except queue.Empty:
             pass
         self.root.after(30, self._poll)
+
+    def _restore(self):
+        """Undo whatever Windows did to the box while it sat hidden for hours:
+        minimized it (Win+D / Win+M), hid it, or dropped it from the topmost
+        band. Logs what it found, then puts it back on top without focusing it."""
+        hwnd = wintypes.HWND(self.hwnd)
+        wrong = [name for name, bad in (
+            ("minimized", _u32.IsIconic(hwnd)),
+            ("hidden", not _u32.IsWindowVisible(hwnd)),
+            ("not topmost", not _u32.GetWindowLongW(hwnd, -20) & 0x8),     # WS_EX_TOPMOST
+        ) if bad]
+        if wrong:
+            print(f"overlay was {', '.join(wrong)}; restoring", flush=True)
+        if _u32.IsIconic(hwnd):
+            _u32.ShowWindow(hwnd, 4)                                       # SW_SHOWNOACTIVATE
+        # HWND_TOPMOST; SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_SHOWWINDOW
+        _u32.SetWindowPos(hwnd, wintypes.HWND(-1), 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x40)
 
 
 # --- typing -----------------------------------------------------------------

@@ -132,7 +132,8 @@ jobs:
           if (-not $p) { throw "app not running after /relaunch=1 install" }
           Write-Output "relaunched: pid $($p[0].Id)"
           $v = python -c "import sys; sys.path.insert(0, 'windows'); import dictation; print(dictation.installed_version())"
-          if ($v -ne "0.0.0") { throw "installed_version() read '$v', expected 0.0.0" }
+          $want = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}".TrimStart("v") } else { "0.0.0" }
+          if ($v -ne $want) { throw "installed_version() read '$v', expected $want" }
           Write-Output "installed_version() -> $v"
           $exe = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run").WhisperDictation.Trim('"')
           Start-Process (Join-Path (Split-Path $exe) "unins000.exe") -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES" -Wait

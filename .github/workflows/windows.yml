@@ -125,7 +125,8 @@ jobs:
       - name: Updater's silent install relaunches the app
         shell: pwsh
         run: |
-          Start-Process windows\dist\whisper-dictation-setup.exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/relaunch=1" -Wait
+          # -Wait would also wait on the relaunched app, which never exits; wait on setup alone.
+          (Start-Process windows\dist\whisper-dictation-setup.exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/relaunch=1" -PassThru).WaitForExit()
           Start-Sleep 5
           $p = Get-Process whisper-dictation -ErrorAction SilentlyContinue
           if (-not $p) { throw "app not running after /relaunch=1 install" }

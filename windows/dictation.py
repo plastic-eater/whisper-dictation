@@ -35,8 +35,8 @@ PREVIEW_STEP     = 0.15    # seconds between preview passes (near back-to-back)
 PREVIEW_TAIL_SEC = 30      # preview transcribes the last N seconds (whisper's own window)
 RATE             = 16000
 THREADS          = str(min(8, os.cpu_count() or 4))
-LLKHF_INJECTED   = 0x10
-WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP = 0x100, 0x101, 0x104, 0x105
+MOD_NOREPEAT     = 0x4000
+WM_HOTKEY        = 0x0312
 
 LOG  = os.path.join(APP_DIR, "dictation.log")
 WAV  = os.path.join(tempfile.gettempdir(), "whisper-ptt.wav")
@@ -364,26 +364,35 @@ class Dictation:
             self.stop_and_type()
 
 
-def start_hooks(d):
-    from pynput import keyboard, mouse
-    kb_listener = None
+def watch_key(d, vk):
+    """The push-to-talk key, as a registered hotkey rather than a low-level hook:
+    Windows silently drops a hook whose callback is ever slow (after sleep, under
+    load), which left the key dead while the app kept running. A hotkey can't be
+    dropped. It swallows the key press; the release is read from the key state."""
+    _u32.GetAsyncKeyState.restype = ctypes.c_short
+    if not _u32.RegisterHotKey(None, 1, MOD_NOREPEAT, vk):
+        print(f"push-to-talk key vk:{vk:#04x} is already taken by another app", flush=True)
+        return
+    src = f"vk:{vk:#04x}"
+    msg = wintypes.MSG()
+    while _u32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+        if msg.message != WM_HOTKEY:
+            continue
+        d.events.put(("down", src, time.time()))
+        while _u32.GetAsyncKeyState(vk) & 0x8000:
+            time.sleep(0.02)
+        d.events.put(("up", src, time.time()))
 
-    def kb_filter(msg, data):
-        if data.vkCode not in PTT_VKS or data.flags & LLKHF_INJECTED:
-            return True
-        src = f"vk:{data.vkCode:#04x}"
-        if msg in (WM_KEYDOWN, WM_SYSKEYDOWN):
-            d.events.put(("down", src, time.time()))
-        elif msg in (WM_KEYUP, WM_SYSKEYUP):
-            d.events.put(("up", src, time.time()))
-        kb_listener.suppress_event()          # swallow the key so it never does its normal job
+
+def start_hooks(d):
+    from pynput import mouse
 
     def on_click(x, y, button, pressed):
         if button.name in PTT_MOUSE:
             d.events.put(("down" if pressed else "up", f"mouse:{button.name}", time.time()))
 
-    kb_listener = keyboard.Listener(win32_event_filter=kb_filter)
-    kb_listener.start()
+    for vk in PTT_VKS:
+        threading.Thread(target=watch_key, args=(d, vk), daemon=True).start()
     mouse.Listener(on_click=on_click).start()
 
 

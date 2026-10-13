@@ -45,6 +45,25 @@ jobs:
           print("transcribed:", text)
           assert text and "ask not what your country" in text.lower(), text
 
+      - name: Push-to-talk hotkey sees press and release
+        shell: python
+        run: |
+          import ctypes, queue, sys, threading, time
+          sys.path.insert(0, "windows")
+          import dictation
+
+          class D:
+              events = queue.Queue()
+
+          threading.Thread(target=dictation.watch_key, args=(D, 0x2D), daemon=True).start()
+          time.sleep(0.5)
+          kbd = ctypes.windll.user32.keybd_event
+          kbd(0x2D, 0, 0, 0)
+          time.sleep(0.5)
+          kbd(0x2D, 0, 2, 0)                  # KEYEVENTF_KEYUP
+          got = [D.events.get(timeout=3)[:2] for _ in range(2)]
+          print("events:", got)
+          assert got == [("down", "vk:0x2d"), ("up", "vk:0x2d")], got
       - name: Preview overlay recovers after Windows hides it
         shell: python
         run: |

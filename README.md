@@ -18,6 +18,12 @@ runs its `install.sh`. Run the same line again to update. To do it by hand
 instead, download the source from the latest GitHub release (or `git clone`
 the repo), then run `./install.sh` from that folder.
 
+To uninstall, run `uninstall.sh` (from the repo, or
+`curl -fsSL https://raw.githubusercontent.com/plastic-eater/whisper-dictation/main/uninstall.sh | bash`).
+It removes the services, ydotool and the engines and models, asks before
+dropping you from the `input` group or deleting your settings, and leaves the
+apt packages and any clone you installed from yourself.
+
 `install.sh` installs deps, builds whisper.cpp + ydotool from source (the repo
 stays tiny: engines and models are fetched/built, not committed), benchmarks CPU vs
 Vulkan (GPU), then benchmarks bigger models until one gets too slow for a live

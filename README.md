@@ -10,10 +10,13 @@ Uses [whisper.cpp](https://github.com/ggml-org/whisper.cpp) for transcription an
 ## Install
 
 ```bash
-git clone <this-repo> whisper-dictation
-cd whisper-dictation
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/plastic-eater/whisper-dictation/main/get.sh | bash
 ```
+
+That clones the latest release into `~/.local/share/whisper-dictation/src` and
+runs its `install.sh`. Run the same line again to update. To do it by hand
+instead, download the source from the latest GitHub release (or `git clone`
+the repo), then run `./install.sh` from that folder.
 
 `install.sh` installs deps, builds whisper.cpp + ydotool from source (the repo
 stays tiny: engines and models are fetched/built, not committed), benchmarks CPU vs
